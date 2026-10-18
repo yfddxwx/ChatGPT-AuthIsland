@@ -1,25 +1,79 @@
 # ChatGPT Auth Island
 
-ChatGPT 网页版的玻璃灵动岛授权器。直接读取 ChatGPT 页面自身的权限对话框与生成状态，不依赖不稳定的桌面 UI Automation。
+Windows 11 的原生授权批准器：以一个带弹性展开动画的“灵动岛”显示 ChatGPT 宿主送来的权限，逐项展示、不合并、不猜测；用户点 **Allow** 或 **Deny** 后，结果同步返回宿主。本项目不读取账号、Cookie、聊天内容或 API 密钥。
+
+> ChatGPT 没有公开的桌面授权拦截接口。Auth Island 因而提供一个本机桥接协议，供获得宿主授权的 ChatGPT 集成、扩展或自动化工具调用；它不能也不会绕过 ChatGPT 的原生批准流程。
+
+## Features
+
+- Windows 原生 WPF 单文件发布；不需要 Windows App SDK 或 Electron。
+- 顶部悬浮、毛玻璃观感、展开/收起动画；窗口可拖动。
+- 权限颗粒度完全来自宿主的 `permissions[]`：不聚合、不扩权、不隐去描述。
+- 会话完成通知；点击岛屿会在默认浏览器打开对应会话。
+- 仅监听 `127.0.0.1`，不会暴露到局域网。
 
 ## Install
 
-1. 下载仓库并解压。
-2. 在 Chrome 或 Edge 打开 `chrome://extensions`。
-3. 开启「开发者模式」，点击「加载已解压的扩展程序」，选择本仓库目录。
-4. 打开或刷新 [chatgpt.com](https://chatgpt.com)。
+下载 Release 中的 `ChatGPT.AuthIsland.exe`，双击运行即可。首次运行后，它会在屏幕顶部显示 “Bridge ready”。
 
-## Behavior
+从源代码发布：
 
-- 顶部居中毛玻璃岛，具有入场、呼吸、展开和完成提示动画。
-- 只在 ChatGPT 的权限对话框中显示宿主提供的实际操作按钮；点击岛内按钮等同于点击该宿主按钮，绝不自动批准。
-- 生成结束时，岛会变为绿色可点击提醒，同时发出浏览器通知。
-- 点击任一完成提醒会回到触发它的精确会话 URL。
-- 不收集、传输或存储聊天内容。
+```powershell
+dotnet publish ChatGPT.AuthIsland/ChatGPT.AuthIsland.csproj -c Release
+```
 
-## Requirements
+产物在 `ChatGPT.AuthIsland/bin/Release/net8.0-windows/win-x64/publish/`。
 
-Chrome 或 Microsoft Edge，ChatGPT 网页版。桌面原生客户端没有稳定公开的权限/会话 API，无法在不注入进程的前提下可靠实现这一功能。
+## Bridge API
+
+所有请求都只发给 `http://127.0.0.1:41373/v1/`。首次启动会生成随机桥接令牌，保存在 `%LOCALAPPDATA%\ChatGPT.AuthIsland\bridge.json`；调用方必须带上 `Authorization: Bearer <token>`。批准请求会阻塞至用户选择后再返回，适合宿主保持原有的授权颗粒度。
+
+```http
+POST /v1/approvals
+Content-Type: application/json
+Authorization: Bearer <token from bridge.json>
+
+{
+  "requestId": "req_42",
+  "conversationUrl": "https://chatgpt.com/c/example",
+  "title": "Run workspace command?",
+  "summary": "The host needs your decision.",
+  "permissions": [
+    { "name": "Read D:\\project", "description": "Inspect source files", "risk": "low" },
+    { "name": "Run npm test", "description": "Execute the test command", "risk": "medium" }
+  ]
+}
+```
+
+Response:
+
+```json
+{"requestId":"req_42","decision":"allow","permissions":["Read D:\\project","Run npm test"]}
+```
+
+当宿主会话结束时：
+
+```http
+POST /v1/completions
+Content-Type: application/json
+Authorization: Bearer <token from bridge.json>
+
+{"conversationUrl":"https://chatgpt.com/c/example","title":"Task completed","summary":"Click to return to the conversation."}
+```
+
+## Development
+
+Requires .NET 8 SDK on Windows. There are no third-party runtime dependencies.
+
+```powershell
+dotnet build ChatGPT.AuthIsland.sln
+dotnet run --project ChatGPT.AuthIsland/ChatGPT.AuthIsland.csproj
+```
+
+## Prior art and acknowledgements
+
+- [Windows App SDK](https://github.com/microsoft/WindowsAppSDK) informed the Windows-native notification and activation direction.
+- [Toasty](https://github.com/shanselman/toasty) inspired the source-window return workflow; no source code was copied.
 
 ## License
 

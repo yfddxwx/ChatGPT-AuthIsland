@@ -1,0 +1,10 @@
+<Application x:Class="ChatGPT.AuthIsland.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <SolidColorBrush x:Key="Island" Color="#E61A1A1D" />
+    <SolidColorBrush x:Key="Surface" Color="#B8202025" />
+    <SolidColorBrush x:Key="Primary" Color="#5EE6A1" />
+    <SolidColorBrush x:Key="Muted" Color="#B7B8C1" />
+  </Application.Resources>
+</Application>
