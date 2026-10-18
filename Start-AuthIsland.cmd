@@ -1,2 +1,2 @@
 @echo off
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0ChatGPT-AuthIsland.ps1"
+start "ChatGPT Auth Island" /b powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0ChatGPT-AuthIsland.ps1"

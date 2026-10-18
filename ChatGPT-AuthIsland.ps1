@@ -21,6 +21,8 @@ $script:lastBusy = $false
 $script:lastRequestKey = ''
 $script:pending = @()
 $script:lastCompletedAt = [DateTime]::MinValue
+$script:completionUntil = [DateTime]::MinValue
+$script:nextScan = [DateTime]::MinValue
 $script:expanded = $false
 $script:targetWidth = 286
 $script:targetHeight = 72
@@ -68,7 +70,7 @@ function Find-PermissionRequests([System.Windows.Automation.AutomationElement]$r
 
 function Test-Busy([System.Windows.Automation.AutomationElement]$root) {
   foreach ($button in (Get-UiButtons $root)) {
-    if ((Get-Text $button) -match '(?i)^(stop generating|stop|\u505c\u6b62\u751f\u6210)$') { return $true }
+    if ((Get-Text $button) -match '(?i)(stop generating|stop streaming|\u505c\u6b62\u751f\u6210|\u505c\u6b62\u8f93\u51fa)') { return $true }
   }
   return $false
 }
@@ -89,16 +91,32 @@ function Set-Expanded([bool]$value) {
   $line.Visible = $value; $request.Visible = $value; $context.Visible = $value
 }
 
+function Focus-ChatGPT {
+  if ($script:chatHandle -ne [IntPtr]::Zero) {
+    [Native]::ShowWindowAsync($script:chatHandle, 9) | Out-Null
+    [Native]::SetForegroundWindow($script:chatHandle) | Out-Null
+  }
+}
+
+function Show-Completion {
+  $script:completionUntil = [DateTime]::Now.AddSeconds(8)
+  Set-Expanded $false
+  $title.Text = 'Response complete'
+  $status.Text = 'Click the island to return to ChatGPT'
+  $form.Invalidate()
+  $notify.ShowBalloonTip(7000, 'ChatGPT response complete', 'Click the Auth Island to return to this conversation.', [Windows.Forms.ToolTipIcon]::Info)
+}
+
 $form = New-Object Windows.Forms.Form
 $form.FormBorderStyle = 'None'; $form.StartPosition = 'Manual'; $form.TopMost = $true
-$form.ShowInTaskbar = $false; $form.BackColor = [Drawing.Color]::FromArgb(16,22,33)
-$form.ForeColor = [Drawing.Color]::White; $form.Opacity = 0.94
+$form.ShowInTaskbar = $false; $form.BackColor = [Drawing.Color]::FromArgb(8,12,20)
+$form.ForeColor = [Drawing.Color]::White; $form.Opacity = 0.97
 $form.Width = 286; $form.Height = 72
 $form.Add_Resize({ Set-RoundedRegion })
 $form.Add_Shown({
   $screen = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-  $form.Left = $screen.Right - $form.Width - 24; $form.Top = $screen.Top + 18
-  $mica = 3; $corner = 2
+  $form.Left = $screen.Left + [int](($screen.Width - $form.Width) / 2); $form.Top = $screen.Top + 8
+  $mica = 2; $corner = 2
   [Native]::DwmSetWindowAttribute($form.Handle, 38, [ref]$mica, 4) | Out-Null
   [Native]::DwmSetWindowAttribute($form.Handle, 33, [ref]$corner, 4) | Out-Null
   Set-RoundedRegion
@@ -108,12 +126,12 @@ $form.Add_Paint({
   $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
   $brush = New-Object Drawing.Drawing2D.LinearGradientBrush(
     (New-Object Drawing.Point(0,0)), (New-Object Drawing.Point($sender.Width,$sender.Height)),
-    [Drawing.Color]::FromArgb(235,20,28,42), [Drawing.Color]::FromArgb(225,8,12,20))
+    [Drawing.Color]::FromArgb(250,28,37,57), [Drawing.Color]::FromArgb(245,8,12,21))
   $e.Graphics.FillRectangle($brush, 0, 0, $sender.Width, $sender.Height)
   $brush.Dispose()
-  $pen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(90,150,190,255),1)
-  $e.Graphics.DrawLine($pen, 28, 1, $sender.Width-28, 1); $pen.Dispose()
-  $dot = if ($script:expanded) { [Drawing.Color]::FromArgb(70,220,150) } else { [Drawing.Color]::FromArgb(95,165,255) }
+  $pen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(120,175,210,255),1)
+  $e.Graphics.DrawArc($pen, 1, 1, $sender.Width-2, $sender.Height-2, 198, 144); $pen.Dispose()
+  $dot = if ([DateTime]::Now -lt $script:completionUntil) { [Drawing.Color]::FromArgb(95,225,160) } elseif ($script:expanded) { [Drawing.Color]::FromArgb(255,185,110) } else { [Drawing.Color]::FromArgb(120,180,255) }
   $dotBrush = New-Object Drawing.SolidBrush($dot)
   $e.Graphics.FillEllipse($dotBrush, 22, 25, 10, 10); $dotBrush.Dispose()
 })
@@ -125,7 +143,7 @@ $title.Text = 'Auth Island'; $form.Controls.Add($title)
 $status = New-Object Windows.Forms.Label
 $status.Location = New-Object Drawing.Point(44,38); $status.AutoSize = $true
 $status.ForeColor = [Drawing.Color]::FromArgb(185,199,220)
-$status.Text = 'Monitoring ChatGPT...'; $form.Controls.Add($status)
+$status.Text = 'Watching ChatGPT in the background'; $form.Controls.Add($status)
 $request = New-Object Windows.Forms.Label
 $request.Location = New-Object Drawing.Point(24,70); $request.MaximumSize = New-Object Drawing.Size(382,18); $request.AutoSize = $true
 $request.Font = New-Object Drawing.Font('Segoe UI', 9)
@@ -163,41 +181,46 @@ $form.Controls.Add($ignore)
 
 $notify = New-Object Windows.Forms.NotifyIcon
 $notify.Icon = [Drawing.SystemIcons]::Information; $notify.Visible = $true; $notify.Text = 'ChatGPT Auth Island'
-$notify.Add_DoubleClick({ if ($script:chatHandle -ne [IntPtr]::Zero) { [Native]::ShowWindowAsync($script:chatHandle, 9); [Native]::SetForegroundWindow($script:chatHandle) } })
-$notify.Add_BalloonTipClicked({ if ($script:chatHandle -ne [IntPtr]::Zero) { [Native]::ShowWindowAsync($script:chatHandle, 9); [Native]::SetForegroundWindow($script:chatHandle) } })
+$notify.Add_DoubleClick({ Focus-ChatGPT })
+$notify.Add_BalloonTipClicked({ Focus-ChatGPT })
 $menu = New-Object Windows.Forms.ContextMenuStrip
 $exit = $menu.Items.Add('Exit')
 $exit.Add_Click({ $notify.Visible = $false; $timer.Stop(); $form.Close() })
 $notify.ContextMenuStrip = $menu
 
 $timer = New-Object Windows.Forms.Timer
-$timer.Interval = 120
+$timer.Interval = 33
 $timer.Add_Tick({
   if ($form.Width -ne $script:targetWidth -or $form.Height -ne $script:targetHeight) {
     $form.Width += [Math]::Sign($script:targetWidth - $form.Width) * [Math]::Min(22, [Math]::Abs($script:targetWidth - $form.Width))
     $form.Height += [Math]::Sign($script:targetHeight - $form.Height) * [Math]::Min(14, [Math]::Abs($script:targetHeight - $form.Height))
     $screen = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $form.Left = $screen.Right - $form.Width - 24
+    $form.Left = $screen.Left + [int](($screen.Width - $form.Width) / 2)
     Set-RoundedRegion; $form.Invalidate()
   }
+  if ([DateTime]::Now -lt $script:nextScan) { return }
+  $script:nextScan = [DateTime]::Now.AddMilliseconds(250)
   $process = Get-ChatGPTWindow
-  if (-not $process) { $status.Text = 'ChatGPT desktop host not found'; return }
+  if (-not $process) { $title.Text = 'Auth Island'; $status.Text = 'Waiting for ChatGPT desktop'; return }
   $script:chatHandle = $process.MainWindowHandle
   try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($script:chatHandle) } catch { return }
   $busy = Test-Busy $root
   if ($script:lastBusy -and -not $busy -and (([DateTime]::Now - $script:lastCompletedAt).TotalSeconds -gt 3)) {
-    $script:lastCompletedAt = [DateTime]::Now
-    $notify.ShowBalloonTip(5000, 'ChatGPT session complete', 'Click to return to the active ChatGPT conversation.', [Windows.Forms.ToolTipIcon]::Info)
+    $script:lastCompletedAt = [DateTime]::Now; Show-Completion
   }
   $script:lastBusy = $busy
   $requests = @(Find-PermissionRequests $root); $script:pending = $requests
   if ($requests.Count -gt 0) {
     $key = (($requests | ForEach-Object Id) -join '|')
     if ($key -ne $script:lastRequestKey) { $script:lastRequestKey = $key; Set-Expanded $true; $form.Show() }
+    $title.Text = 'Approval needed'
     $request.Text = "ChatGPT requests: $($requests[0].Name)$(if ($requests.Count -gt 1) { "  +$($requests.Count - 1)" })"
-    $context.Text = $requests[0].Context; $status.Text = 'Action required'
-  } elseif (-not $busy -and -not $script:expanded) { $status.Text = 'Monitoring ChatGPT...' }
+    $context.Text = $requests[0].Context; $status.Text = 'Review before approving'
+  } elseif (-not $busy -and -not $script:expanded -and [DateTime]::Now -ge $script:completionUntil) { $title.Text = 'Auth Island'; $status.Text = 'Watching ChatGPT in the background' }
 })
+$form.Add_Click({ if ([DateTime]::Now -lt $script:completionUntil) { Focus-ChatGPT } })
+$title.Add_Click({ if ([DateTime]::Now -lt $script:completionUntil) { Focus-ChatGPT } })
+$status.Add_Click({ if ([DateTime]::Now -lt $script:completionUntil) { Focus-ChatGPT } })
 $timer.Start()
 Set-Expanded $false
 [Windows.Forms.Application]::Run($form)
