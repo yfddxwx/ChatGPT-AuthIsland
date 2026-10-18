@@ -20,6 +20,7 @@ $script:chatHandle = [IntPtr]::Zero
 $script:lastBusy = $false
 $script:lastRequestKey = ''
 $script:pending = @()
+$script:lastCompletedAt = [DateTime]::MinValue
 $script:expanded = $false
 $script:targetWidth = 286
 $script:targetHeight = 72
@@ -40,12 +41,27 @@ function Get-UiButtons([System.Windows.Automation.AutomationElement]$root) {
   $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
+function Get-ElementContext([System.Windows.Automation.AutomationElement]$element) {
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker; $node = $element
+  for ($i = 0; $i -lt 5; $i++) {
+    try { $node = $walker.GetParent($node) } catch { break }
+    if ($null -eq $node) { break }
+    $name = Get-Text $node
+    if ($name -and $name -ne (Get-Text $element)) { return $name }
+  }
+  return 'ChatGPT request'
+}
+
 function Find-PermissionRequests([System.Windows.Automation.AutomationElement]$root) {
-  $allow = '(?i)^(allow|approve|authorize|continue|permit|\u5141\u8bb8|\u6279\u51c6|\u6388\u6743|\u7ee7\u7eed|\u786e\u8ba4)$'
+  # Explicit permission verbs only: ordinary chat buttons are never exposed for approval.
+  $allow = '(?i)^(allow|approve|authorize|permit|\u5141\u8bb8|\u6279\u51c6|\u6388\u6743)$'
   $items = @()
   foreach ($button in (Get-UiButtons $root)) {
     $name = Get-Text $button
-    if ($name -match $allow) { $items += [pscustomobject]@{ Name = $name; Element = $button } }
+    if ($name -match $allow) {
+      $id = try { ($button.GetRuntimeId() -join '.') } catch { $name }
+      $items += [pscustomobject]@{ Name = $name; Context = Get-ElementContext $button; Id = $id; Element = $button }
+    }
   }
   $items
 }
@@ -70,7 +86,7 @@ function Set-Expanded([bool]$value) {
   $script:targetWidth = if ($value) { 430 } else { 286 }
   $script:targetHeight = if ($value) { 142 } else { 72 }
   $approve.Visible = $value; $ignore.Visible = $value
-  $line.Visible = $value; $request.Visible = $value
+  $line.Visible = $value; $request.Visible = $value; $context.Visible = $value
 }
 
 $form = New-Object Windows.Forms.Form
@@ -111,10 +127,14 @@ $status.Location = New-Object Drawing.Point(44,38); $status.AutoSize = $true
 $status.ForeColor = [Drawing.Color]::FromArgb(185,199,220)
 $status.Text = 'Monitoring ChatGPT...'; $form.Controls.Add($status)
 $request = New-Object Windows.Forms.Label
-$request.Location = New-Object Drawing.Point(24,70); $request.AutoSize = $true
+$request.Location = New-Object Drawing.Point(24,70); $request.MaximumSize = New-Object Drawing.Size(382,18); $request.AutoSize = $true
 $request.Font = New-Object Drawing.Font('Segoe UI', 9)
 $request.ForeColor = [Drawing.Color]::FromArgb(210,225,245); $request.Visible = $false
 $form.Controls.Add($request)
+$context = New-Object Windows.Forms.Label
+$context.Location = New-Object Drawing.Point(24,88); $context.MaximumSize = New-Object Drawing.Size(210,18); $context.AutoSize = $true
+$context.Font = New-Object Drawing.Font('Segoe UI', 8); $context.ForeColor = [Drawing.Color]::FromArgb(145,170,205); $context.Visible = $false
+$form.Controls.Add($context)
 $line = New-Object Windows.Forms.Label
 $line.BackColor = [Drawing.Color]::FromArgb(55,75,100); $line.Location = New-Object Drawing.Point(24,62)
 $line.Size = New-Object Drawing.Size(382,1); $line.Visible = $false; $form.Controls.Add($line)
@@ -144,6 +164,7 @@ $form.Controls.Add($ignore)
 $notify = New-Object Windows.Forms.NotifyIcon
 $notify.Icon = [Drawing.SystemIcons]::Information; $notify.Visible = $true; $notify.Text = 'ChatGPT Auth Island'
 $notify.Add_DoubleClick({ if ($script:chatHandle -ne [IntPtr]::Zero) { [Native]::ShowWindowAsync($script:chatHandle, 9); [Native]::SetForegroundWindow($script:chatHandle) } })
+$notify.Add_BalloonTipClicked({ if ($script:chatHandle -ne [IntPtr]::Zero) { [Native]::ShowWindowAsync($script:chatHandle, 9); [Native]::SetForegroundWindow($script:chatHandle) } })
 $menu = New-Object Windows.Forms.ContextMenuStrip
 $exit = $menu.Items.Add('Exit')
 $exit.Add_Click({ $notify.Visible = $false; $timer.Stop(); $form.Close() })
@@ -164,13 +185,17 @@ $timer.Add_Tick({
   $script:chatHandle = $process.MainWindowHandle
   try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($script:chatHandle) } catch { return }
   $busy = Test-Busy $root
-  if ($script:lastBusy -and -not $busy) { $notify.ShowBalloonTip(5000, 'ChatGPT session complete', 'Double-click the tray icon to return to ChatGPT.', [Windows.Forms.ToolTipIcon]::Info) }
+  if ($script:lastBusy -and -not $busy -and (([DateTime]::Now - $script:lastCompletedAt).TotalSeconds -gt 3)) {
+    $script:lastCompletedAt = [DateTime]::Now
+    $notify.ShowBalloonTip(5000, 'ChatGPT session complete', 'Click to return to the active ChatGPT conversation.', [Windows.Forms.ToolTipIcon]::Info)
+  }
   $script:lastBusy = $busy
   $requests = @(Find-PermissionRequests $root); $script:pending = $requests
   if ($requests.Count -gt 0) {
-    $key = (($requests | ForEach-Object Name) -join '|')
+    $key = (($requests | ForEach-Object Id) -join '|')
     if ($key -ne $script:lastRequestKey) { $script:lastRequestKey = $key; Set-Expanded $true; $form.Show() }
-    $request.Text = "Permission request: $($requests[0].Name)"; $status.Text = 'Action required'
+    $request.Text = "ChatGPT requests: $($requests[0].Name)$(if ($requests.Count -gt 1) { "  +$($requests.Count - 1)" })"
+    $context.Text = $requests[0].Context; $status.Text = 'Action required'
   } elseif (-not $busy -and -not $script:expanded) { $status.Text = 'Monitoring ChatGPT...' }
 })
 $timer.Start()
