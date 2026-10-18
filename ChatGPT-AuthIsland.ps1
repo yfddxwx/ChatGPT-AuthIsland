@@ -12,14 +12,17 @@ using System.Runtime.InteropServices;
 public static class Native {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
 }
 '@
 
-$script:chatProcess = $null
 $script:chatHandle = [IntPtr]::Zero
 $script:lastBusy = $false
 $script:lastRequestKey = ''
 $script:pending = @()
+$script:expanded = $false
+$script:targetWidth = 286
+$script:targetHeight = 72
 
 function Get-ChatGPTWindow {
   Get-Process -Name 'ChatGPT','chatgpt' -ErrorAction SilentlyContinue |
@@ -31,9 +34,9 @@ function Get-Text([System.Windows.Automation.AutomationElement]$element) {
 }
 
 function Get-UiButtons([System.Windows.Automation.AutomationElement]$root) {
-  $type = [System.Windows.Automation.Automation.ControlType]::Button
   $condition = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $type)
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Button)
   $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
@@ -54,64 +57,92 @@ function Test-Busy([System.Windows.Automation.AutomationElement]$root) {
   return $false
 }
 
+function Set-RoundedRegion {
+  $path = New-Object Drawing.Drawing2D.GraphicsPath
+  $r = 30; $w = $form.Width; $h = $form.Height
+  $path.AddArc(0,0,$r,$r,180,90); $path.AddArc($w-$r,0,$r,$r,270,90)
+  $path.AddArc($w-$r,$h-$r,$r,$r,0,90); $path.AddArc(0,$h-$r,$r,$r,90,90)
+  $path.CloseFigure(); $form.Region = New-Object Drawing.Region($path)
+}
+
+function Set-Expanded([bool]$value) {
+  $script:expanded = $value
+  $script:targetWidth = if ($value) { 430 } else { 286 }
+  $script:targetHeight = if ($value) { 142 } else { 72 }
+  $approve.Visible = $value; $ignore.Visible = $value
+  $line.Visible = $value; $request.Visible = $value
+}
+
 $form = New-Object Windows.Forms.Form
-$form.FormBorderStyle = 'None'
-$form.StartPosition = 'Manual'
-$form.TopMost = $true
-$form.ShowInTaskbar = $false
-$form.BackColor = [Drawing.Color]::FromArgb(22,24,29)
-$form.ForeColor = [Drawing.Color]::White
-$form.Opacity = 0.96
-$form.Width = 410
-$form.Height = 116
+$form.FormBorderStyle = 'None'; $form.StartPosition = 'Manual'; $form.TopMost = $true
+$form.ShowInTaskbar = $false; $form.BackColor = [Drawing.Color]::FromArgb(16,22,33)
+$form.ForeColor = [Drawing.Color]::White; $form.Opacity = 0.94
+$form.Width = 286; $form.Height = 72
+$form.Add_Resize({ Set-RoundedRegion })
 $form.Add_Shown({
   $screen = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-  $form.Left = $screen.Right - $form.Width - 24
-  $form.Top = $screen.Top + 18
+  $form.Left = $screen.Right - $form.Width - 24; $form.Top = $screen.Top + 18
+  $mica = 3; $corner = 2
+  [Native]::DwmSetWindowAttribute($form.Handle, 38, [ref]$mica, 4) | Out-Null
+  [Native]::DwmSetWindowAttribute($form.Handle, 33, [ref]$corner, 4) | Out-Null
+  Set-RoundedRegion
 })
 $form.Add_Paint({
   param($sender, $e)
-  $path = New-Object Drawing.Drawing2D.GraphicsPath
-  $r = 22; $w = $sender.Width; $h = $sender.Height
-  $path.AddArc(0,0,$r,$r,180,90); $path.AddArc($w-$r,0,$r,$r,270,90)
-  $path.AddArc($w-$r,$h-$r,$r,$r,0,90); $path.AddArc(0,$h-$r,$r,$r,90,90)
-  $path.CloseFigure(); $sender.Region = New-Object Drawing.Region($path)
+  $e.Graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $brush = New-Object Drawing.Drawing2D.LinearGradientBrush(
+    (New-Object Drawing.Point(0,0)), (New-Object Drawing.Point($sender.Width,$sender.Height)),
+    [Drawing.Color]::FromArgb(235,20,28,42), [Drawing.Color]::FromArgb(225,8,12,20))
+  $e.Graphics.FillRectangle($brush, 0, 0, $sender.Width, $sender.Height)
+  $brush.Dispose()
+  $pen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(90,150,190,255),1)
+  $e.Graphics.DrawLine($pen, 28, 1, $sender.Width-28, 1); $pen.Dispose()
+  $dot = if ($script:expanded) { [Drawing.Color]::FromArgb(70,220,150) } else { [Drawing.Color]::FromArgb(95,165,255) }
+  $dotBrush = New-Object Drawing.SolidBrush($dot)
+  $e.Graphics.FillEllipse($dotBrush, 22, 25, 10, 10); $dotBrush.Dispose()
 })
 
 $title = New-Object Windows.Forms.Label
-$title.Location = New-Object Drawing.Point(22,14); $title.AutoSize = $true
+$title.Location = New-Object Drawing.Point(44,13); $title.AutoSize = $true
 $title.Font = New-Object Drawing.Font('Segoe UI Semibold', 12)
-$title.Text = 'ChatGPT Auth Island'
-$form.Controls.Add($title)
+$title.Text = 'Auth Island'; $form.Controls.Add($title)
 $status = New-Object Windows.Forms.Label
-$status.Location = New-Object Drawing.Point(22,42); $status.AutoSize = $true
-$status.ForeColor = [Drawing.Color]::FromArgb(190,198,210)
-$status.Text = 'Monitoring ChatGPT host...'
-$form.Controls.Add($status)
+$status.Location = New-Object Drawing.Point(44,38); $status.AutoSize = $true
+$status.ForeColor = [Drawing.Color]::FromArgb(185,199,220)
+$status.Text = 'Monitoring ChatGPT...'; $form.Controls.Add($status)
+$request = New-Object Windows.Forms.Label
+$request.Location = New-Object Drawing.Point(24,70); $request.AutoSize = $true
+$request.Font = New-Object Drawing.Font('Segoe UI', 9)
+$request.ForeColor = [Drawing.Color]::FromArgb(210,225,245); $request.Visible = $false
+$form.Controls.Add($request)
+$line = New-Object Windows.Forms.Label
+$line.BackColor = [Drawing.Color]::FromArgb(55,75,100); $line.Location = New-Object Drawing.Point(24,62)
+$line.Size = New-Object Drawing.Size(382,1); $line.Visible = $false; $form.Controls.Add($line)
+
 $approve = New-Object Windows.Forms.Button
 $approve.Text = 'Approve'; $approve.FlatStyle = 'Flat'; $approve.FlatAppearance.BorderSize = 0
-$approve.BackColor = [Drawing.Color]::FromArgb(43,180,111); $approve.ForeColor = [Drawing.Color]::White
-$approve.Location = New-Object Drawing.Point(232,72); $approve.Size = New-Object Drawing.Size(74,28)
-$approve.Add_Click({
+$approve.BackColor = [Drawing.Color]::FromArgb(42,190,125); $approve.ForeColor = [Drawing.Color]::White
+$approve.Location = New-Object Drawing.Point(250,103); $approve.Size = New-Object Drawing.Size(76,28)
+$approve.Visible = $false; $approve.Add_Click({
   if ($script:pending.Count -gt 0) {
     try {
       $pattern = $script:pending[0].Element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-      $pattern.Invoke(); $status.Text = 'Approved current ChatGPT request'; $script:lastRequestKey = ''
+      $pattern.Invoke(); $status.Text = 'Approved current request'; $script:lastRequestKey = ''
     } catch { $status.Text = 'Approval failed; use ChatGPT directly' }
   }
 })
 $form.Controls.Add($approve)
 $ignore = New-Object Windows.Forms.Button
 $ignore.Text = 'Ignore'; $ignore.FlatStyle = 'Flat'; $ignore.FlatAppearance.BorderSize = 0
-$ignore.BackColor = [Drawing.Color]::FromArgb(55,61,71); $ignore.ForeColor = [Drawing.Color]::White
-$ignore.Location = New-Object Drawing.Point(316,72); $ignore.Size = New-Object Drawing.Size(70,28)
-$ignore.Add_Click({ $script:lastRequestKey = ''; $script:pending = @(); $status.Text = 'Ignored current request' })
+$ignore.BackColor = [Drawing.Color]::FromArgb(48,62,82); $ignore.ForeColor = [Drawing.Color]::White
+$ignore.Location = New-Object Drawing.Point(334,103); $ignore.Size = New-Object Drawing.Size(72,28)
+$ignore.Visible = $false; $ignore.Add_Click({
+  $script:lastRequestKey = ''; $script:pending = @(); $status.Text = 'Ignored current request'; Set-Expanded $false
+})
 $form.Controls.Add($ignore)
 
 $notify = New-Object Windows.Forms.NotifyIcon
-$notify.Icon = [Drawing.SystemIcons]::Information
-$notify.Visible = $true
-$notify.Text = 'ChatGPT Auth Island'
+$notify.Icon = [Drawing.SystemIcons]::Information; $notify.Visible = $true; $notify.Text = 'ChatGPT Auth Island'
 $notify.Add_DoubleClick({ if ($script:chatHandle -ne [IntPtr]::Zero) { [Native]::ShowWindowAsync($script:chatHandle, 9); [Native]::SetForegroundWindow($script:chatHandle) } })
 $menu = New-Object Windows.Forms.ContextMenuStrip
 $exit = $menu.Items.Add('Exit')
@@ -119,24 +150,29 @@ $exit.Add_Click({ $notify.Visible = $false; $timer.Stop(); $form.Close() })
 $notify.ContextMenuStrip = $menu
 
 $timer = New-Object Windows.Forms.Timer
-$timer.Interval = 900
+$timer.Interval = 120
 $timer.Add_Tick({
+  if ($form.Width -ne $script:targetWidth -or $form.Height -ne $script:targetHeight) {
+    $form.Width += [Math]::Sign($script:targetWidth - $form.Width) * [Math]::Min(22, [Math]::Abs($script:targetWidth - $form.Width))
+    $form.Height += [Math]::Sign($script:targetHeight - $form.Height) * [Math]::Min(14, [Math]::Abs($script:targetHeight - $form.Height))
+    $screen = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $form.Left = $screen.Right - $form.Width - 24
+    Set-RoundedRegion; $form.Invalidate()
+  }
   $process = Get-ChatGPTWindow
   if (-not $process) { $status.Text = 'ChatGPT desktop host not found'; return }
-  $script:chatProcess = $process; $script:chatHandle = $process.MainWindowHandle
+  $script:chatHandle = $process.MainWindowHandle
   try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($script:chatHandle) } catch { return }
   $busy = Test-Busy $root
-  if ($script:lastBusy -and -not $busy) {
-    $notify.ShowBalloonTip(5000, 'ChatGPT session complete', 'Double-click the tray icon to return to ChatGPT.', [Windows.Forms.ToolTipIcon]::Info)
-  }
+  if ($script:lastBusy -and -not $busy) { $notify.ShowBalloonTip(5000, 'ChatGPT session complete', 'Double-click the tray icon to return to ChatGPT.', [Windows.Forms.ToolTipIcon]::Info) }
   $script:lastBusy = $busy
-  $requests = @(Find-PermissionRequests $root)
-  $script:pending = $requests
+  $requests = @(Find-PermissionRequests $root); $script:pending = $requests
   if ($requests.Count -gt 0) {
     $key = (($requests | ForEach-Object Name) -join '|')
-    if ($key -ne $script:lastRequestKey) { $script:lastRequestKey = $key; $form.Show() }
-    $status.Text = "ChatGPT permission request: $($requests[0].Name)"
-  } elseif (-not $busy) { $status.Text = 'Monitoring ChatGPT host...' }
+    if ($key -ne $script:lastRequestKey) { $script:lastRequestKey = $key; Set-Expanded $true; $form.Show() }
+    $request.Text = "Permission request: $($requests[0].Name)"; $status.Text = 'Action required'
+  } elseif (-not $busy -and -not $script:expanded) { $status.Text = 'Monitoring ChatGPT...' }
 })
 $timer.Start()
+Set-Expanded $false
 [Windows.Forms.Application]::Run($form)
