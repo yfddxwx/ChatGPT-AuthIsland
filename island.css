@@ -1,0 +1,32 @@
+#chatgpt-auth-island {
+  all: initial; box-sizing: border-box; position: fixed; z-index: 2147483647;
+  top: max(12px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; width: 310px; min-height: 66px;
+  padding: 11px 18px; border: 1px solid rgba(255,255,255,.24); border-radius: 34px;
+  color: #f9fbff; background: linear-gradient(135deg, rgba(35,45,68,.78), rgba(8,12,23,.86));
+  box-shadow: 0 18px 60px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.28);
+  backdrop-filter: blur(28px) saturate(170%); -webkit-backdrop-filter: blur(28px) saturate(170%);
+  font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", sans-serif; cursor: default;
+  transition: width .42s cubic-bezier(.2,.9,.2,1), min-height .42s cubic-bezier(.2,.9,.2,1), border-radius .42s ease, transform .42s ease;
+  animation: island-enter .55s cubic-bezier(.2,.9,.2,1), island-breathe 3s ease-in-out infinite;
+}
+#chatgpt-auth-island *, #chatgpt-auth-island *::before { box-sizing: border-box; font-family: inherit; }
+#chatgpt-auth-island::before { content: ""; position: absolute; inset: 1px; border-radius: inherit; pointer-events: none; background: radial-gradient(circle at 20% 0, rgba(144,194,255,.22), transparent 38%); }
+.island-orb { position: relative; width: 11px; height: 11px; flex: 0 0 11px; border-radius: 50%; background: #8ebdff; box-shadow: 0 0 0 5px rgba(142,189,255,.13), 0 0 18px #72a9ff; }
+.island-copy { position: relative; min-width: 0; display: grid; gap: 3px; }
+.island-copy strong { font-size: 13px; font-weight: 720; letter-spacing: .01em; }
+.island-copy span { overflow: hidden; max-width: 245px; color: rgba(237,244,255,.72); font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.island-detail { position: relative; display: none; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; width: 100%; }
+#chatgpt-auth-island.expanded { width: min(480px, calc(100vw - 24px)); min-height: 156px; flex-wrap: wrap; align-content: center; border-radius: 27px; animation: island-pop .42s cubic-bezier(.2,.9,.2,1); }
+#chatgpt-auth-island.expanded .island-orb { background: #ffbf73; box-shadow: 0 0 0 5px rgba(255,191,115,.14), 0 0 20px #ffb15c; }
+#chatgpt-auth-island.expanded .island-copy { width: calc(100% - 24px); }
+#chatgpt-auth-island.expanded .island-copy span { max-width: 410px; }
+#chatgpt-auth-island.expanded .island-detail { display: grid; }
+.island-action { appearance: none; border: 1px solid rgba(255,255,255,.22); border-radius: 13px; padding: 9px 12px; color: #fff; background: rgba(255,255,255,.13); cursor: pointer; font-size: 12px; font-weight: 650; transition: transform .16s ease, background .16s ease; }
+.island-action:hover { transform: translateY(-1px); background: rgba(146,195,255,.32); }
+#chatgpt-auth-island.complete { cursor: pointer; border-color: rgba(130,239,189,.46); animation: island-pop .42s cubic-bezier(.2,.9,.2,1), island-glow 1.4s ease-in-out infinite; }
+#chatgpt-auth-island.complete .island-orb { background: #79ebb9; box-shadow: 0 0 0 5px rgba(121,235,185,.16), 0 0 22px #68e0ac; }
+@keyframes island-enter { from { opacity: 0; transform: translate(-50%,-22px) scale(.82); } to { opacity: 1; transform: translate(-50%,0) scale(1); } }
+@keyframes island-pop { 0% { transform: translateX(-50%) scale(.92); } 65% { transform: translateX(-50%) scale(1.025); } 100% { transform: translateX(-50%) scale(1); } }
+@keyframes island-breathe { 50% { box-shadow: 0 20px 65px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.3); } }
+@keyframes island-glow { 50% { box-shadow: 0 18px 66px rgba(70,225,163,.3), inset 0 1px 0 rgba(255,255,255,.32); } }
