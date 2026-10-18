@@ -38,7 +38,7 @@ function Get-UiButtons([System.Windows.Automation.AutomationElement]$root) {
 }
 
 function Find-PermissionRequests([System.Windows.Automation.AutomationElement]$root) {
-  $allow = '(?i)^(allow|approve|authorize|continue|permit|允许|批准|授权|继续|确认)$'
+  $allow = '(?i)^(allow|approve|authorize|continue|permit|\u5141\u8bb8|\u6279\u51c6|\u6388\u6743|\u7ee7\u7eed|\u786e\u8ba4)$'
   $items = @()
   foreach ($button in (Get-UiButtons $root)) {
     $name = Get-Text $button
@@ -49,7 +49,7 @@ function Find-PermissionRequests([System.Windows.Automation.AutomationElement]$r
 
 function Test-Busy([System.Windows.Automation.AutomationElement]$root) {
   foreach ($button in (Get-UiButtons $root)) {
-    if ((Get-Text $button) -match '(?i)^(stop generating|停止生成|stop)$') { return $true }
+    if ((Get-Text $button) -match '(?i)^(stop generating|stop|\u505c\u6b62\u751f\u6210)$') { return $true }
   }
   return $false
 }
@@ -86,26 +86,26 @@ $form.Controls.Add($title)
 $status = New-Object Windows.Forms.Label
 $status.Location = New-Object Drawing.Point(22,42); $status.AutoSize = $true
 $status.ForeColor = [Drawing.Color]::FromArgb(190,198,210)
-$status.Text = '正在监控 ChatGPT 宿主…'
+$status.Text = 'Monitoring ChatGPT host...'
 $form.Controls.Add($status)
 $approve = New-Object Windows.Forms.Button
-$approve.Text = '批准'; $approve.FlatStyle = 'Flat'; $approve.FlatAppearance.BorderSize = 0
+$approve.Text = 'Approve'; $approve.FlatStyle = 'Flat'; $approve.FlatAppearance.BorderSize = 0
 $approve.BackColor = [Drawing.Color]::FromArgb(43,180,111); $approve.ForeColor = [Drawing.Color]::White
 $approve.Location = New-Object Drawing.Point(232,72); $approve.Size = New-Object Drawing.Size(74,28)
 $approve.Add_Click({
   if ($script:pending.Count -gt 0) {
     try {
       $pattern = $script:pending[0].Element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-      $pattern.Invoke(); $status.Text = '已批准 ChatGPT 当前权限请求'; $script:lastRequestKey = ''
-    } catch { $status.Text = '批准失败：请在 ChatGPT 窗口中手动操作' }
+      $pattern.Invoke(); $status.Text = 'Approved current ChatGPT request'; $script:lastRequestKey = ''
+    } catch { $status.Text = 'Approval failed; use ChatGPT directly' }
   }
 })
 $form.Controls.Add($approve)
 $ignore = New-Object Windows.Forms.Button
-$ignore.Text = '忽略'; $ignore.FlatStyle = 'Flat'; $ignore.FlatAppearance.BorderSize = 0
+$ignore.Text = 'Ignore'; $ignore.FlatStyle = 'Flat'; $ignore.FlatAppearance.BorderSize = 0
 $ignore.BackColor = [Drawing.Color]::FromArgb(55,61,71); $ignore.ForeColor = [Drawing.Color]::White
 $ignore.Location = New-Object Drawing.Point(316,72); $ignore.Size = New-Object Drawing.Size(70,28)
-$ignore.Add_Click({ $script:lastRequestKey = ''; $script:pending = @(); $status.Text = '已忽略当前请求' })
+$ignore.Add_Click({ $script:lastRequestKey = ''; $script:pending = @(); $status.Text = 'Ignored current request' })
 $form.Controls.Add($ignore)
 
 $notify = New-Object Windows.Forms.NotifyIcon
@@ -114,7 +114,7 @@ $notify.Visible = $true
 $notify.Text = 'ChatGPT Auth Island'
 $notify.Add_DoubleClick({ if ($script:chatHandle -ne [IntPtr]::Zero) { [Native]::ShowWindowAsync($script:chatHandle, 9); [Native]::SetForegroundWindow($script:chatHandle) } })
 $menu = New-Object Windows.Forms.ContextMenuStrip
-$exit = $menu.Items.Add('退出')
+$exit = $menu.Items.Add('Exit')
 $exit.Add_Click({ $notify.Visible = $false; $timer.Stop(); $form.Close() })
 $notify.ContextMenuStrip = $menu
 
@@ -122,12 +122,12 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 900
 $timer.Add_Tick({
   $process = Get-ChatGPTWindow
-  if (-not $process) { $status.Text = '未发现 ChatGPT 桌面宿主'; return }
+  if (-not $process) { $status.Text = 'ChatGPT desktop host not found'; return }
   $script:chatProcess = $process; $script:chatHandle = $process.MainWindowHandle
   try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($script:chatHandle) } catch { return }
   $busy = Test-Busy $root
   if ($script:lastBusy -and -not $busy) {
-    $notify.ShowBalloonTip(5000, 'ChatGPT 会话完成', '点击托盘图标可回到对应 ChatGPT 会话。', [Windows.Forms.ToolTipIcon]::Info)
+    $notify.ShowBalloonTip(5000, 'ChatGPT session complete', 'Double-click the tray icon to return to ChatGPT.', [Windows.Forms.ToolTipIcon]::Info)
   }
   $script:lastBusy = $busy
   $requests = @(Find-PermissionRequests $root)
@@ -135,8 +135,8 @@ $timer.Add_Tick({
   if ($requests.Count -gt 0) {
     $key = (($requests | ForEach-Object Name) -join '|')
     if ($key -ne $script:lastRequestKey) { $script:lastRequestKey = $key; $form.Show() }
-    $status.Text = "ChatGPT 请求权限：$($requests[0].Name)"
-  } elseif (-not $busy) { $status.Text = '正在监控 ChatGPT 宿主…' }
+    $status.Text = "ChatGPT permission request: $($requests[0].Name)"
+  } elseif (-not $busy) { $status.Text = 'Monitoring ChatGPT host...' }
 })
 $timer.Start()
 [Windows.Forms.Application]::Run($form)
